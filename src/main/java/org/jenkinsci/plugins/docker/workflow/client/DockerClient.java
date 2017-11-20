@@ -83,6 +83,7 @@ public class DockerClient {
      * 3:cpu:/docker/4193df6bcf5fce75f3fc77f303b2ac06fb664adeb269b959b7ae17b3f8dcf329/14d7240da87b145e4992654c908a8631dbf179abb7f88115ea72743e1192d07d
      */
     public static final String CGROUP_MATCHER_PATTERN = "(?m)^\\d+:[\\w,?]+:(?:/[\\w.]+)?(?:/docker[-/])(/?(?:docker/)?(?<containerId>\\p{XDigit}{12,}))+(?:\\.scope)?$";
+    public static final String CPUSET_MATCHER_PATTERN = "(?m)^.*([a-z0-9]{64})$";
 
     private final Launcher launcher;
     private final @CheckForNull Node node;
@@ -309,7 +310,19 @@ public class DockerClient {
      * @see <a href="http://stackoverflow.com/a/25729598/12916">Discussion</a>
      */
     public Optional<String> getContainerIdIfContainerized() throws IOException, InterruptedException {
-        final Pattern pattern = Pattern.compile(CGROUP_MATCHER_PATTERN);
+        final Pattern cpuSetPattern = Pattern.compile(CPUSET_MATCHER_PATTERN);
+        FilePath cpuSetFile = node.createPath("/proc/self/cpuset");
+        if (cpuSetFile == null || !cpuSetFile.exists()) {
+            return Optional.absent();
+        }
+        String cpuSet = cpuSetFile.readToString();
+        Matcher cpuSetMatcher = cpuSetPattern.matcher(cpuSet);
+
+        if (cpuSetMatcher.find()) {
+          return Optional.of(cpuSetMatcher.group(cpuSetMatcher.groupCount()));
+        }
+
+        final Pattern cgroupPattern = Pattern.compile(CGROUP_MATCHER_PATTERN);
         if (node == null) {
             return Optional.absent();
         }
@@ -318,8 +331,12 @@ public class DockerClient {
             return Optional.absent();
         }
         String cgroup = cgroupFile.readToString();
-        Matcher matcher = pattern.matcher(cgroup);
-        return matcher.find() ? Optional.of(matcher.group(matcher.groupCount())) : Optional.<String>absent();
+        Matcher cgroupMatcher = cgroupPattern.matcher(cgroup);
+        if (cgroupMatcher.find()) {
+          return Optional.of(cgroupMatcher.group(cgroupMatcher.groupCount()));
+        }
+
+        return Optional.<String>absent();
     }
 
     public ContainerRecord getContainerRecord(@Nonnull EnvVars launchEnv, String containerId) throws IOException, InterruptedException {
